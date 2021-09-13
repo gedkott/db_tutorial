@@ -89,8 +89,8 @@ fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> 
 
 fn read_user_input(input_buffer: &mut String) -> Result<&str, ReplErr> {
     flush_stdout()
-        .and_then(|_| stdin().read_line(input_buffer).map(|n| (n, input_buffer)))
-        .and_then(ensure_stdout_newline)
+        .and_then(|_| stdin().read_line(input_buffer))
+        .and_then(move |n| ensure_stdout_newline((n, input_buffer)))
         .map_err(ReplErr::IOErr)
 }
 

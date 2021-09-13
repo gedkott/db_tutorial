@@ -101,19 +101,21 @@ fn flush_stdout() -> Result<(), std::io::Error> {
 fn ensure_stdout_newline((n, input): (usize, &mut String)) -> Result<&str, std::io::Error> {
     match (n, &input[..]) {
         (0, "") => {
-            // Standard EOF scenario
+            // Standard EOF scenario; no newline character for sure
             stdout().write_all(b"\n").map(move |_| &input[0..n])
         }
         _ => {
             // when reading EOF at end of *line*, read_line reads EOF twice
             // there will be no new line in this case since EOF is being read
             // so we print a new line to make sure that we don't print anything
-            // on the same line as the original prompt
+            // on the same line as the original prompt; def no newline
             if !input.contains('\n') {
                 stdout().write_all(b"\n").map(move |_| &input[0..n])
             } else {
-                //
-                Ok(input)
+                // input contains a newline (which is prob already handled by stdout)
+                // and its not needed for the caller in our application since the newline
+                // character is meaningless in the user input buffer
+                Ok(&input[0..n - 1])
             }
         }
     }

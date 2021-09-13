@@ -26,7 +26,7 @@ struct Results {}
 enum ReplAction<'a> {
     Exit,
     Statement { original_input: &'a str },
-    Unknown { message: String },
+    Unsupported { message: String },
 }
 
 #[derive(Debug)]
@@ -53,7 +53,7 @@ fn main() {
                         Err(e) => println!("db message: {:?}", &e),
                     }
                 }
-                ReplAction::Unknown { message } => println!("db message: {}", &message),
+                ReplAction::Unsupported { message } => println!("db message: {}", &message),
             },
             Err(e) => {
                 println!("db message: {:?}", &e)
@@ -126,7 +126,7 @@ impl<'a> From<&'a str> for ReplAction<'a> {
         if let Some('.') = s.chars().next() {
             match s.into() {
                 MetaCommand::Exit => ReplAction::Exit,
-                MetaCommand::Unsupported => ReplAction::Unknown {
+                MetaCommand::Unsupported => ReplAction::Unsupported {
                     message: format!("command {:?} is unsupported", s),
                 },
             }

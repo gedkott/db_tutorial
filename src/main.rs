@@ -150,9 +150,9 @@ fn execute_statement(
             let row_offset = table.num_rows % rows_per_page;
             let byte_offset = row_offset * 291;
             let mut point =
-                &mut page.buffer[byte_offset as usize..(byte_offset as usize + 291 + 1)];
+                &mut page.buffer[byte_offset as usize..(byte_offset as usize + 291)];
             point.write_all(&bytes).unwrap();
-            println!("{:?}", point);
+            println!("{:?}", &mut page.buffer[byte_offset as usize..(byte_offset as usize + 291)]);
             table.num_rows += 1;
             Ok(ReplResult::Success)
         }

@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::io::Write;
 use std::io::{stdin, stdout};
 
@@ -6,13 +7,15 @@ enum MetaCommand {
     Unsupported,
 }
 
-enum StatementType {
-    Insert,
+enum Statement<'a> {
+    Insert { row: Row<'a> },
     Select,
 }
 
-struct Statement {
-    statement_type: StatementType,
+struct Row<'a> {
+    id: u32,
+    username: &'a [u8; 32],
+    email: &'a [u8; 255],
 }
 
 #[derive(Debug)]
@@ -63,12 +66,19 @@ fn main() {
 }
 
 fn execute_statement(statement: Statement) -> Result<Results, StatementError> {
-    match statement.statement_type {
-        StatementType::Insert => {
+    match statement {
+        Statement::Insert {
+            row:
+                Row {
+                    id,
+                    username,
+                    email,
+                },
+        } => {
             println!("executing insert statement");
             Ok(Results {})
         }
-        StatementType::Select => {
+        Statement::Select => {
             println!("executing select statement");
             Ok(Results {})
         }
@@ -77,14 +87,32 @@ fn execute_statement(statement: Statement) -> Result<Results, StatementError> {
 
 fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> {
     println!("processing statement {:?}", original_input);
-    let statement_type = if original_input.starts_with("insert") {
-        Ok(StatementType::Insert)
+    if original_input.starts_with("insert") {
+        let mut parts = original_input.split(' ');
+        match (
+            parts.nth(1),
+            parts.nth(2),
+            parts.nth(3),
+        ) {
+            (Some(id), Some(username), Some(email)) => {
+                let id = id.parse().ok().unwrap();
+                let username = username.as_bytes()[..32].try_into().unwrap();
+                let email = email.as_bytes()[..32].try_into().unwrap();
+                Ok(Statement::Insert {
+                    row: Row {
+                        id,
+                        username,
+                        email,
+                    },
+                })
+            }
+            _ => Err(StatementError::Sql),
+        }
     } else if original_input.starts_with("select") {
-        Ok(StatementType::Select)
+        Ok(Statement::Select)
     } else {
         Err(StatementError::Sql)
-    };
-    statement_type.map(|st| Statement { statement_type: st })
+    }
 }
 
 fn read_user_input(input_buffer: &mut String) -> Result<&str, ReplErr> {

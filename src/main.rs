@@ -221,8 +221,7 @@ fn execute_statement<'a>(
 
             for i in 0..table.num_rows {
                 let point = row_slot(table, i);
-                let sized_point: &[u8; ROW_SIZE] =
-                    point.try_into().map_err(ExecuteError::RowRead)?;
+                let sized_point = point.try_into().map_err(ExecuteError::RowRead)?;
                 let row = deserialize_row(sized_point);
                 rows.push(row);
             }
@@ -242,8 +241,8 @@ fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> 
             (Some(id), Some(username), Some(email)) => {
                 let id = id.parse().map_err(|_| StatementError::Sql)?;
 
-                let username: &[u8] = username.as_bytes();
-                let email: &[u8] = email.as_bytes();
+                let username = username.as_bytes();
+                let email = email.as_bytes();
 
                 Ok(Statement::Insert {
                     row: Row {

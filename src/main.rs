@@ -1,15 +1,16 @@
 use std::array::TryFromSliceError;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::io::Write;
 use std::io::{stdin, stdout};
-use std::io::{Read, Write};
+use std::iter::repeat;
 use std::str::from_utf8;
 
 const PAGE_SIZE: usize = 4096;
 const EMAIL_SIZE: usize = std::mem::size_of::<[u8; 255]>();
 const USERNAME_SIZE: usize = std::mem::size_of::<[u8; 32]>();
 const ID_SIZE: usize = std::mem::size_of::<u32>();
-const ROW_SIZE: usize = std::mem::size_of::<Row>();
+const ROW_SIZE: usize = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 const ID_OFFSET: usize = 0;
 const USERNAME_OFFSET: usize = ID_OFFSET + ID_SIZE;
@@ -22,16 +23,16 @@ enum MetaCommand {
     Unsupported,
 }
 
-enum Statement {
-    Insert { row: Row },
+enum Statement<'a> {
+    Insert { row: Row<'a> },
     Select,
 }
 
 #[derive(Debug)]
-struct Row {
+struct Row<'a> {
     id: u32,
-    username: [u8; USERNAME_SIZE],
-    email: [u8; EMAIL_SIZE],
+    username: &'a [u8],
+    email: &'a [u8],
 }
 
 #[derive(Debug)]
@@ -56,8 +57,8 @@ enum ExecuteError {
 }
 
 #[derive(Debug)]
-enum ReplResult {
-    Rows(Vec<Row>),
+enum ReplResult<'a> {
+    Rows(Vec<Row<'a>>),
     Success,
 }
 
@@ -101,12 +102,8 @@ fn main() {
                                     println!(
                                         "{:?}, {:?}, {:?}",
                                         r.id,
-                                        from_utf8(&r.username[..])
-                                            .unwrap()
-                                            .trim_matches(char::from(0)),
-                                        from_utf8(&r.email[..])
-                                            .unwrap()
-                                            .trim_matches(char::from(0))
+                                        from_utf8(r.username).unwrap().trim_matches(char::from(0)),
+                                        from_utf8(r.email).unwrap().trim_matches(char::from(0))
                                     );
                                 });
                             }
@@ -128,34 +125,57 @@ fn serialize_row(row: &Row) -> [u8; ROW_SIZE] {
     let mut buf = [0u8; ROW_SIZE];
 
     let ibytes = &u32::to_be_bytes(row.id)[..];
-    let ubytes = &row.username[..];
-    let ebytes = &row.email[..];
+    let ubytes = row.username;
+    let ebytes = row.email;
 
     (&mut buf[..USERNAME_OFFSET]).write_all(ibytes).unwrap();
-    (&mut buf[USERNAME_OFFSET..EMAIL_OFFSET])
+
+    let num_un_bytes = if USERNAME_SIZE > ubytes.len() {
+        USERNAME_SIZE
+    } else {
+        ubytes.len()
+    };
+    let num_email_bytes = if EMAIL_SIZE > ebytes.len() {
+        EMAIL_SIZE
+    } else {
+        ebytes.len()
+    };
+
+    (&mut buf[USERNAME_OFFSET..USERNAME_OFFSET + num_un_bytes])
         .write_all(ubytes)
         .unwrap();
-    (&mut buf[EMAIL_OFFSET..ROW_SIZE])
+
+    if USERNAME_SIZE - num_un_bytes > 0 {
+        (&mut buf[USERNAME_OFFSET + num_un_bytes..USERNAME_OFFSET + USERNAME_SIZE])
+            .write_all(
+                &repeat(0u8)
+                    .take(USERNAME_SIZE - num_un_bytes)
+                    .collect::<Vec<u8>>(),
+            )
+            .unwrap();
+    }
+
+    (&mut buf[EMAIL_OFFSET..EMAIL_OFFSET + num_email_bytes])
         .write_all(ebytes)
         .unwrap();
+
+    if EMAIL_SIZE - num_email_bytes > 0 {
+        (&mut buf[EMAIL_OFFSET + num_email_bytes..ROW_SIZE])
+            .write_all(
+                &repeat(0u8)
+                    .take(EMAIL_SIZE - num_email_bytes)
+                    .collect::<Vec<u8>>(),
+            )
+            .unwrap();
+    }
 
     buf
 }
 
 fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
-    let mut ibytes = [0u8; ID_SIZE];
-    let mut username = [0u8; USERNAME_SIZE];
-    let mut email = [0u8; EMAIL_SIZE];
-
-    (&buf[..USERNAME_OFFSET]).read_exact(&mut ibytes).unwrap();
-    (&buf[USERNAME_OFFSET..EMAIL_OFFSET])
-        .read_exact(&mut username)
-        .unwrap();
-    (&buf[EMAIL_OFFSET..ROW_SIZE])
-        .read_exact(&mut email)
-        .unwrap();
-
-    let id = u32::from_be_bytes(ibytes);
+    let id = u32::from_be_bytes(buf[..USERNAME_OFFSET].try_into().unwrap());
+    let username = &buf[USERNAME_OFFSET..EMAIL_OFFSET];
+    let email = &buf[EMAIL_OFFSET..ROW_SIZE];
 
     Row {
         id,
@@ -164,22 +184,33 @@ fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
     }
 }
 
-fn row_slot(table: &mut Table, row_num: u32) -> &mut [u8] {
+fn row_slot(table: &Table, row_num: u32) -> &[u8] {
+    let page_num = row_num / ROWS_PER_PAGE as u32;
+    let page = &table.pages[&page_num];
+    let row_offset = row_num % ROWS_PER_PAGE as u32;
+    let byte_offset = row_offset * ROW_SIZE as u32;
+    &page.buffer[byte_offset as usize..(byte_offset as usize + ROW_SIZE)]
+}
+
+fn row_slot_mut(table: &mut Table, row_num: u32) -> &mut [u8] {
     let page_num = row_num / ROWS_PER_PAGE as u32;
     let page = table.pages.entry(page_num).or_insert_with(|| Page {
         buffer: [0u8; PAGE_SIZE],
     });
     let row_offset = row_num % ROWS_PER_PAGE as u32;
     let byte_offset = row_offset * ROW_SIZE as u32;
-    &mut page.buffer[byte_offset as usize..(byte_offset as usize + ROW_SIZE)]
+    &mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE]
 }
 
-fn execute_statement(statement: Statement, table: &mut Table) -> Result<ReplResult, ExecuteError> {
+fn execute_statement<'a>(
+    statement: Statement<'a>,
+    table: &'a mut Table,
+) -> Result<ReplResult<'a>, ExecuteError> {
     match statement {
         Statement::Insert { row } => {
             println!("executing insert statement");
             let bytes = serialize_row(&row);
-            let mut point = row_slot(table, table.num_rows);
+            let mut point = row_slot_mut(table, table.num_rows);
             point.write_all(&bytes).map_err(ExecuteError::Write)?;
             table.num_rows += 1;
             Ok(ReplResult::Success)
@@ -190,7 +221,7 @@ fn execute_statement(statement: Statement, table: &mut Table) -> Result<ReplResu
 
             for i in 0..table.num_rows {
                 let point = row_slot(table, i);
-                let sized_point: &mut [u8; ROW_SIZE] =
+                let sized_point: &[u8; ROW_SIZE] =
                     point.try_into().map_err(ExecuteError::RowRead)?;
                 let row = deserialize_row(sized_point);
                 rows.push(row);
@@ -211,29 +242,14 @@ fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> 
             (Some(id), Some(username), Some(email)) => {
                 let id = id.parse().map_err(|_| StatementError::Sql)?;
 
-                let mut un = [0u8; USERNAME_SIZE];
-                for (i, b) in username.as_bytes().iter().enumerate() {
-                    if i == USERNAME_SIZE {
-                        break;
-                    } else {
-                        un[i] = *b;
-                    }
-                }
-
-                let mut em = [0u8; EMAIL_SIZE];
-                for (i, b) in email.as_bytes().iter().enumerate() {
-                    if i == EMAIL_SIZE {
-                        break;
-                    } else {
-                        em[i] = *b;
-                    }
-                }
+                let username: &[u8] = username.as_bytes();
+                let email: &[u8] = email.as_bytes();
 
                 Ok(Statement::Insert {
                     row: Row {
                         id,
-                        username: un,
-                        email: em,
+                        username,
+                        email,
                     },
                 })
             }

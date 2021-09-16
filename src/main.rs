@@ -15,8 +15,8 @@ const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 const ID_OFFSET: usize = 0;
 const USERNAME_OFFSET: usize = ID_OFFSET + ID_SIZE;
 const EMAIL_OFFSET: usize = USERNAME_OFFSET + USERNAME_SIZE;
-// const TABLE_MAX_PAGES: usize = 100;
-// const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
+const TABLE_MAX_PAGES: usize = 100;
+const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 enum MetaCommand {
     Exit,
@@ -48,12 +48,15 @@ struct Table {
 #[derive(Debug)]
 enum StatementError {
     Sql,
+    TooLong,
+    InvalidId,
 }
 
 #[derive(Debug)]
 enum ExecuteError {
     RowRead(TryFromSliceError),
     Write(std::io::Error),
+    TableFull,
 }
 
 #[derive(Debug)]
@@ -209,11 +212,15 @@ fn execute_statement<'a>(
     match statement {
         Statement::Insert { row } => {
             println!("executing insert statement");
-            let bytes = serialize_row(&row);
-            let mut point = row_slot_mut(table, table.num_rows);
-            point.write_all(&bytes).map_err(ExecuteError::Write)?;
-            table.num_rows += 1;
-            Ok(ReplResult::Success)
+            if table.num_rows == TABLE_MAX_ROWS as u32 {
+                Err(ExecuteError::TableFull)
+            } else {
+                let bytes = serialize_row(&row);
+                let mut point = row_slot_mut(table, table.num_rows);
+                point.write_all(&bytes).map_err(ExecuteError::Write)?;
+                table.num_rows += 1;
+                Ok(ReplResult::Success)
+            }
         }
         Statement::Select => {
             println!("executing select statement");
@@ -239,18 +246,22 @@ fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> 
         let email = parts.next();
         match (id, username, email) {
             (Some(id), Some(username), Some(email)) => {
-                let id = id.parse().map_err(|_| StatementError::Sql)?;
+                let id = id.parse().map_err(|_| StatementError::InvalidId)?;
 
                 let username = username.as_bytes();
                 let email = email.as_bytes();
 
-                Ok(Statement::Insert {
-                    row: Row {
-                        id,
-                        username,
-                        email,
-                    },
-                })
+                if username.len() > USERNAME_SIZE || email.len() > EMAIL_SIZE {
+                    Err(StatementError::TooLong)
+                } else {
+                    Ok(Statement::Insert {
+                        row: Row {
+                            id,
+                            username,
+                            email,
+                        },
+                    })
+                }
             }
             _ => Err(StatementError::Sql),
         }

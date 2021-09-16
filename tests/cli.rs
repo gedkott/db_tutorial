@@ -142,7 +142,8 @@ fn prints_error_messages_if_id_is_negative() {
     ];
     let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
-    assert_eq!(output[output.len() - 1..], vec![
-        "db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb >"
-    ]);
+    assert_eq!(
+        output[output.len() - 1..],
+        vec!["db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb >"]
+    );
 }

@@ -36,8 +36,6 @@ fn run_script(commands: &[&str]) -> Vec<String> {
             })
             .collect();
 
-        println!("read {} bytes", output.len());
-
         match seen.last() {
             Some(c) => output.push(*c),
             _ => (),
@@ -55,19 +53,25 @@ fn run_script(commands: &[&str]) -> Vec<String> {
 
 #[test]
 fn database_inserts_and_retrieves_a_row() {
-    let output = run_script(&["insert 1 g g", "select", ".exit"]);
+    let output = run_script(&["insert 1 user1 person1@example.com", "select", ".exit"]);
     assert_eq!(
-        output.join(""),
+        output,
         vec![
-            "db > processing statement \"insert 1 g g\"",
-            "executing insert statement",
-            "result Success",
-            "db > processing statement \"select\"",
-            "executing select statement",
-            "1, \"g\", \"g\"",
-            "db > "
+            vec![
+                "db > processing statement \"insert 1 user1 person1@example.com\"",
+                "executing insert statement",
+                "result Success",
+                "db > ",
+            ]
+            .join("\n"),
+            vec![
+                "processing statement \"select\"",
+                "executing select statement",
+                "1, \"user1\", \"person1@example.com\"",
+                "db > "
+            ]
+            .join("\n")
         ]
-        .join("\n")
     );
 }
 
@@ -77,21 +81,23 @@ fn prints_error_message_when_table_is_full() {
         .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
         .collect();
 
-    println!("inserting {:?} rows", insert_cmds.len());
-
     let cmds = [insert_cmds, vec![".exit".into()]].concat();
     let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
-        output[output.len()-1..],
+        *output.last().unwrap(),
         vec![
-            "processing statement \"insert 1401 user1401 person1401@example.com\"\nexecuting insert statement\ndb message: Execute(TableFull)\ndb > "
+            "processing statement \"insert 1401 user1401 person1401@example.com\"",
+            "executing insert statement",
+            "db message: Execute(TableFull)",
+            "db > "
         ]
+        .join("\n")
     );
 }
 
 #[test]
-fn allows_inserting_strings_that_are_the_max_length() {
+fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
     let long_username: String = repeat("a").take(32).collect();
     let long_email: String = repeat("a").take(255).collect();
 
@@ -103,9 +109,20 @@ fn allows_inserting_strings_that_are_the_max_length() {
     let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
-        output[output.len()-1..],
+        output,
         vec![
-            "processing statement \"select\"\nexecuting select statement\n1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb > "
+            vec![
+                "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", 
+                "executing insert statement",
+                "result Success",
+                "db > "
+            ].join("\n"), 
+            vec![
+                "processing statement \"select\"",
+                "executing select statement",
+                "1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+                "db > "
+            ].join("\n")
         ]
     );
 }
@@ -122,9 +139,13 @@ fn prints_error_messages_if_strings_are_too_long() {
     let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
-        output[output.len() - 1..],
+        output,
         vec![
-            "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb message: Statement(TooLong)\ndb > "
+            vec![
+                "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+                "db message: Statement(TooLong)",
+                "db > "
+            ].join("\n")
         ]
     );
 }
@@ -141,9 +162,12 @@ fn prints_error_messages_if_id_is_negative() {
     let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
-        output[output.len() - 1..],
-        vec![
-            "db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb > "
+        output,
+        vec![vec![
+            "db > processing statement \"insert -1 a a\"",
+            "db message: Statement(InvalidId)",
+            "db > "
         ]
+        .join("\n")]
     );
 }

@@ -95,10 +95,20 @@ fn main() {
             Ok(input) => match input.into() {
                 ReplAction::Exit => break,
                 ReplAction::Statement { original_input } => {
+                    println!("processing statement {:?}", original_input);
                     match prepare_statement(original_input)
                         .map_err(ReplErr::Statement)
-                        .and_then(|s| execute_statement(s, &mut table).map_err(ReplErr::Execute))
-                    {
+                        .and_then(|s| {
+                            match s {
+                                Statement::Insert { row: _ } => {
+                                    println!("executing insert statement");
+                                }
+                                Statement::Select => {
+                                    println!("executing select statement");
+                                }
+                            }
+                            execute_statement(s, &mut table).map_err(ReplErr::Execute)
+                        }) {
                         Ok(results) => match results {
                             ReplResult::Rows(rows) => {
                                 rows.iter().for_each(|r| {
@@ -211,7 +221,6 @@ fn execute_statement<'a>(
 ) -> Result<ReplResult<'a>, ExecuteError> {
     match statement {
         Statement::Insert { row } => {
-            println!("executing insert statement");
             if table.num_rows == TABLE_MAX_ROWS as u32 {
                 Err(ExecuteError::TableFull)
             } else {
@@ -223,7 +232,6 @@ fn execute_statement<'a>(
             }
         }
         Statement::Select => {
-            println!("executing select statement");
             let mut rows = Vec::new();
 
             for i in 0..table.num_rows {
@@ -238,7 +246,6 @@ fn execute_statement<'a>(
 }
 
 fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> {
-    println!("processing statement {:?}", original_input);
     if original_input.starts_with("insert") {
         let mut parts = original_input.split(' ');
         let id = parts.nth(1);

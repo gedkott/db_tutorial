@@ -40,7 +40,7 @@ fn run_script(commands: &[&str]) -> Vec<String> {
 
         match seen.last() {
             Some(c) => output.push(*c),
-            _ => ()
+            _ => (),
         }
 
         let buf = String::from_utf8_lossy(&output).to_string();
@@ -142,6 +142,8 @@ fn prints_error_messages_if_id_is_negative() {
     let output = run_script(&cmds);
     assert_eq!(
         output[output.len() - 1..],
-        vec!["db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb > "]
+        vec![
+            "db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb > "
+        ]
     );
 }

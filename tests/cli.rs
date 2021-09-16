@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::iter::repeat;
 use std::process::{Command, Stdio};
 
-fn run_script(commands: &[&str]) -> Vec<String> {
+fn run_script<T: AsRef<str>>(commands: &[T]) -> Vec<String> {
     let mut child = Command::new("cargo")
         .arg("run")
         .stdin(Stdio::piped())
@@ -16,7 +16,7 @@ fn run_script(commands: &[&str]) -> Vec<String> {
     let mut outputs = vec![];
     cmds.for_each(|cmd| {
         stdin
-            .write_all(&[cmd.as_bytes(), b"\n"].concat())
+            .write_all(&[cmd.as_ref().as_bytes(), b"\n"].concat())
             .expect("Failed to write to stdin");
 
         let end_of_output = b"\ndb > ";
@@ -82,7 +82,6 @@ fn prints_error_message_when_table_is_full() {
         .collect();
 
     let cmds = [insert_cmds, vec![".exit".into()]].concat();
-    let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
         *output.last().unwrap(),
@@ -106,7 +105,6 @@ fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
         "select".into(),
         ".exit".into(),
     ];
-    let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
         output,
@@ -136,7 +134,6 @@ fn prints_error_messages_if_strings_are_too_long() {
         format!("insert 1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
         output,
@@ -159,7 +156,6 @@ fn prints_error_messages_if_id_is_negative() {
         format!("insert -1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let cmds: Vec<&str> = cmds.iter().map(|s| s.as_str()).collect();
     let output = run_script(&cmds);
     assert_eq!(
         output,

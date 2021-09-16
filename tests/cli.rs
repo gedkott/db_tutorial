@@ -21,7 +21,7 @@ fn run_script(commands: &[&str]) -> Vec<String> {
 
         let end_of_output = b"\ndb > ";
         let mut seen = vec![];
-        let output: Vec<u8> = stdout
+        let mut output: Vec<u8> = stdout
             .bytes()
             .filter_map(|b| b.ok())
             .take_while(|b| {
@@ -32,21 +32,19 @@ fn run_script(commands: &[&str]) -> Vec<String> {
                     seen.push(*b);
                 }
 
-                if &seen == end_of_output {
-                    false
-                } else {
-                    true
-                }
+                &seen != end_of_output
             })
             .collect();
 
+        println!("read {} bytes", output.len());
+
+        match seen.last() {
+            Some(c) => output.push(*c),
+            _ => ()
+        }
+
         let buf = String::from_utf8_lossy(&output).to_string();
         if buf != "" {
-            println!(
-                "output buf for last command {:?} with length {:?}",
-                buf,
-                buf.len()
-            );
             outputs.push(buf);
         }
     });
@@ -64,10 +62,10 @@ fn database_inserts_and_retrieves_a_row() {
             "db > processing statement \"insert 1 g g\"",
             "executing insert statement",
             "result Success",
-            "db >processing statement \"select\"",
+            "db > processing statement \"select\"",
             "executing select statement",
             "1, \"g\", \"g\"",
-            "db >"
+            "db > "
         ]
         .join("\n")
     );
@@ -87,7 +85,7 @@ fn prints_error_message_when_table_is_full() {
     assert_eq!(
         output[output.len()-1..],
         vec![
-            "processing statement \"insert 1401 user1401 person1401@example.com\"\nexecuting insert statement\ndb message: Execute(TableFull)\ndb >"
+            "processing statement \"insert 1401 user1401 person1401@example.com\"\nexecuting insert statement\ndb message: Execute(TableFull)\ndb > "
         ]
     );
 }
@@ -107,7 +105,7 @@ fn allows_inserting_strings_that_are_the_max_length() {
     assert_eq!(
         output[output.len()-1..],
         vec![
-            "processing statement \"select\"\nexecuting select statement\n1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb >"
+            "processing statement \"select\"\nexecuting select statement\n1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb > "
         ]
     );
 }
@@ -126,7 +124,7 @@ fn prints_error_messages_if_strings_are_too_long() {
     assert_eq!(
         output[output.len() - 1..],
         vec![
-            "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb message: Statement(TooLong)\ndb >"
+            "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ndb message: Statement(TooLong)\ndb > "
         ]
     );
 }
@@ -144,6 +142,6 @@ fn prints_error_messages_if_id_is_negative() {
     let output = run_script(&cmds);
     assert_eq!(
         output[output.len() - 1..],
-        vec!["db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb >"]
+        vec!["db > processing statement \"insert -1 a a\"\ndb message: Statement(InvalidId)\ndb > "]
     );
 }

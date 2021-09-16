@@ -1,9 +1,12 @@
 use std::array::TryFromSliceError;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::io::{stdin, stdout};
 use std::iter::repeat;
+use std::os::windows::prelude::FileExt;
+use std::path::Path;
 use std::str::from_utf8;
 
 const PAGE_SIZE: usize = 4096;
@@ -40,9 +43,93 @@ struct Page {
     buffer: [u8; PAGE_SIZE],
 }
 
+struct Pager {
+    file: File,
+    pages: HashMap<u32, Page>,
+}
+
+#[derive(Debug)]
+enum PagerError {
+    File(std::io::Error),
+    PagesFull,
+}
+
+impl Pager {
+    fn new<T>(filename: T) -> Result<Self, PagerError>
+    where
+        T: AsRef<Path>,
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(filename);
+
+        file.map(|file| Pager {
+            file,
+            pages: HashMap::new(),
+        })
+        .map_err(PagerError::File)
+    }
+
+    fn get_page(&mut self, page_num: u32) -> Result<&mut Page, PagerError> {
+        if page_num > TABLE_MAX_PAGES as u32 {
+            Err(PagerError::PagesFull)
+        } else {
+            let page = self.pages.entry(page_num).or_insert_with(|| Page {
+                buffer: [0u8; PAGE_SIZE],
+            });
+
+            let num_pages = self
+                .file
+                .metadata()
+                .map(|md| md.len())
+                .map(|l| {
+                    if l % PAGE_SIZE as u64 > 0 {
+                        (l / PAGE_SIZE as u64) + 1
+                    } else {
+                        l / PAGE_SIZE as u64
+                    }
+                })
+                .map_err(PagerError::File)?;
+
+            if page_num as u64 <= num_pages {
+                self.file
+                    .seek_read(
+                        &mut page.buffer[..PAGE_SIZE],
+                        page_num as u64 * PAGE_SIZE as u64,
+                    )
+                    .map_err(PagerError::File)?;
+            }
+
+            Ok(page)
+        }
+    }
+}
+
 struct Table {
     num_rows: u32,
-    pages: HashMap<u32, Page>,
+    pager: Pager,
+}
+
+#[derive(Debug)]
+enum TableError {
+    PagerError(PagerError),
+}
+
+impl Table {
+    fn new<T>(filename: T) -> Result<Self, TableError>
+    where
+        T: AsRef<Path>,
+    {
+        Pager::new(filename)
+            .map_err(TableError::PagerError)
+            .map(|pager| Table { num_rows: 0, pager })
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {}
 }
 
 #[derive(Debug)]
@@ -57,6 +144,7 @@ enum ExecuteError {
     RowRead(TryFromSliceError),
     Write(std::io::Error),
     TableFull,
+    Table(TableError),
 }
 
 #[derive(Debug)]
@@ -82,10 +170,7 @@ fn main() {
     // initialize any thing we need for the REPL
     let mut input_buffer = String::new();
 
-    let mut table = Table {
-        pages: HashMap::new(),
-        num_rows: 0,
-    };
+    let mut table = Table::new("database-file.example").expect("could not create table");
 
     // Loop until "exit" input is provided
     loop {
@@ -199,20 +284,21 @@ fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
 
 fn row_slot(table: &Table, row_num: u32) -> &[u8] {
     let page_num = row_num / ROWS_PER_PAGE as u32;
-    let page = &table.pages[&page_num];
+    let page = &table.pager.pages[&page_num];
     let row_offset = row_num % ROWS_PER_PAGE as u32;
     let byte_offset = row_offset * ROW_SIZE as u32;
     &page.buffer[byte_offset as usize..(byte_offset as usize + ROW_SIZE)]
 }
 
-fn row_slot_mut(table: &mut Table, row_num: u32) -> &mut [u8] {
+fn row_slot_mut(table: &mut Table, row_num: u32) -> Result<&mut [u8], TableError> {
     let page_num = row_num / ROWS_PER_PAGE as u32;
-    let page = table.pages.entry(page_num).or_insert_with(|| Page {
-        buffer: [0u8; PAGE_SIZE],
-    });
+    let page = table
+        .pager
+        .get_page(page_num)
+        .map_err(TableError::PagerError)?;
     let row_offset = row_num % ROWS_PER_PAGE as u32;
     let byte_offset = row_offset * ROW_SIZE as u32;
-    &mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE]
+    Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
 }
 
 fn execute_statement<'a>(
@@ -225,7 +311,7 @@ fn execute_statement<'a>(
                 Err(ExecuteError::TableFull)
             } else {
                 let bytes = serialize_row(&row);
-                let mut point = row_slot_mut(table, table.num_rows);
+                let mut point = row_slot_mut(table, table.num_rows).map_err(ExecuteError::Table)?;
                 point.write_all(&bytes).map_err(ExecuteError::Write)?;
                 table.num_rows += 1;
                 Ok(ReplResult::Success)

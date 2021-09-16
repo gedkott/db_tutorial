@@ -138,20 +138,19 @@ fn keeps_data_after_closing_connection() {
     ]);
     assert_eq!(
         output1,
-        vec![vec![
+        vec![
             "db > processing statement \"insert 1 user1 person1@example.com\"",
             "executing insert statement",
             "result Success",
             "db > ",
         ]
-        .join("\n"),]
     );
 
     let output2 = run_script(vec!["select".into(), ".exit".into()]);
     assert_eq!(
         output2,
         vec![
-            "processing statement \"select\"",
+            "db > processing statement \"select\"",
             "executing select statement",
             "1, \"user1\", \"person1@example.com\"",
             "db > "

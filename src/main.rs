@@ -1,11 +1,14 @@
 use std::array::TryFromSliceError;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::io::{stdin, stdout};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::iter::repeat;
-use std::os::windows::prelude::FileExt;
+// use std::os::windows::prelude::FileExt;
+use std::os::unix::prelude::FileExt;
+
 use std::path::Path;
 use std::str::from_utf8;
 
@@ -46,6 +49,7 @@ struct Page {
 struct Pager {
     file: File,
     pages: HashMap<u32, Page>,
+    length: u64,
 }
 
 #[derive(Debug)]
@@ -59,50 +63,53 @@ impl Pager {
     where
         T: AsRef<Path>,
     {
-        let file = OpenOptions::new()
+        OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(filename);
-
-        file.map(|file| Pager {
-            file,
-            pages: HashMap::new(),
-        })
-        .map_err(PagerError::File)
+            .open(filename)
+            .and_then(|mut file| file.seek(SeekFrom::End(0)).map(|len| (file, len)))
+            .map(|(file, len)| Pager {
+                file,
+                pages: HashMap::new(),
+                length: len,
+            })
+            .map_err(PagerError::File)
     }
 
     fn get_page(&mut self, page_num: u32) -> Result<&mut Page, PagerError> {
         if page_num > TABLE_MAX_PAGES as u32 {
             Err(PagerError::PagesFull)
         } else {
-            let page = self.pages.entry(page_num).or_insert_with(|| Page {
-                buffer: [0u8; PAGE_SIZE],
-            });
+            match self.pages.entry(page_num) {
+                Entry::Occupied(o) => Ok(o.into_mut()),
+                Entry::Vacant(v) => {
+                    let mut page = Page {
+                        buffer: [0u8; PAGE_SIZE],
+                    };
 
-            let num_pages = self
-                .file
-                .metadata()
-                .map(|md| md.len())
-                .map(|l| {
-                    if l % PAGE_SIZE as u64 > 0 {
-                        (l / PAGE_SIZE as u64) + 1
+                    let num_pages = if self.length % PAGE_SIZE as u64 > 0 {
+                        (self.length / PAGE_SIZE as u64) + 1
                     } else {
-                        l / PAGE_SIZE as u64
+                        self.length / PAGE_SIZE as u64
+                    };
+
+                    if page_num as u64 <= num_pages {
+                        let max_offset = self
+                            .file
+                            .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
+                            .map_err(PagerError::File)?;
+                        self.file
+                            .read_exact(&mut page.buffer)
+                            .or_else(|e| match e.kind() {
+                                std::io::ErrorKind::UnexpectedEof => Ok(()),
+                                _ => Err(e),
+                            })
+                            .map_err(PagerError::File)?;
                     }
-                })
-                .map_err(PagerError::File)?;
-
-            if page_num as u64 <= num_pages {
-                self.file
-                    .seek_read(
-                        &mut page.buffer[..PAGE_SIZE],
-                        page_num as u64 * PAGE_SIZE as u64,
-                    )
-                    .map_err(PagerError::File)?;
+                    Ok(v.insert(page))
+                }
             }
-
-            Ok(page)
         }
     }
 }

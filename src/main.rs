@@ -1,4 +1,5 @@
 use std::array::TryFromSliceError;
+use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -47,7 +48,7 @@ struct Page {
 struct Pager {
     file: File,
     pages: HashMap<u32, Page>,
-    length: u64,
+    file_length: u64,
 }
 
 #[derive(Debug)]
@@ -70,7 +71,7 @@ impl Pager {
             .map(|(file, len)| Pager {
                 file,
                 pages: HashMap::new(),
-                length: len,
+                file_length: len,
             })
             .map_err(PagerError::File)
     }
@@ -86,28 +87,93 @@ impl Pager {
                         buffer: [0u8; PAGE_SIZE],
                     };
 
-                    let num_pages = if self.length % PAGE_SIZE as u64 > 0 {
-                        (self.length / PAGE_SIZE as u64) + 1
+                    let total_num_pages_in_file_now = if self.file_length % PAGE_SIZE as u64 > 0 {
+                        // We might save a partial page at the end of the file
+                        (self.file_length / PAGE_SIZE as u64) + 1
                     } else {
-                        self.length / PAGE_SIZE as u64
+                        self.file_length / PAGE_SIZE as u64
                     };
 
-                    if page_num as u64 <= num_pages {
+                    // if the page number requested is greater than the total num of pages
+                    // we have recorded in the file then there is nothing in the file for us to read
+                    // this will be true the first time we write to a fresh page and until we first write
+                    // to the file for that fresh page (bytes in the new page won't be counted until we write to file/disk)
+                    if page_num as u64 <= total_num_pages_in_file_now {
                         self.file
                             .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
                             .map_err(PagerError::File)?;
                         self.file
                             .read_exact(&mut page.buffer)
                             .or_else(|e| match e.kind() {
+                                // I believe this means that
                                 std::io::ErrorKind::UnexpectedEof => Ok(()),
                                 _ => Err(e),
                             })
                             .map_err(PagerError::File)?;
                     }
+
+                    // return the page buffer whether its totally fresh or had been written to disk before
                     Ok(v.insert(page))
                 }
             }
         }
+    }
+
+    // fn load_all_pages(&mut self, total_num_rows: usize) -> Result<(), PagerError> {
+    //     let num_pages_to_load = total_num_rows / ROWS_PER_PAGE;
+
+    //     // for i in 0..num_pages_to_load {
+    //     //     self.pages.
+    //     // }
+
+    //     Ok(())
+    // }
+
+    // the table knows about rows, not the pager; so we expect that data as input
+    fn flush(&mut self, total_num_rows: usize) -> Result<(), PagerError> {
+        let num_full_pages = total_num_rows / ROWS_PER_PAGE;
+        for page_num in 0..num_full_pages {
+            // TODO(): Unwrap DANGER!
+            let page = self.pages.get_mut(&(page_num as u32)).unwrap();
+            self.file
+                .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
+                .map_err(PagerError::File)?;
+
+            self.file
+                .write_all(&page.buffer)
+                .or_else(|e| match e.kind() {
+                    // I believe this means that
+                    std::io::ErrorKind::UnexpectedEof => Ok(()),
+                    _ => Err(e),
+                })
+                .map_err(PagerError::File)?;
+        }
+
+        let num_additional_rows = total_num_rows % ROWS_PER_PAGE;
+        let last_possible_partial_page = num_full_pages;
+        if num_additional_rows > 0 {
+            // TODO(): Unwrap DANGER!
+            let page = self
+                .pages
+                .get_mut(&(last_possible_partial_page as u32))
+                .unwrap();
+            self.file
+                .seek(SeekFrom::Start(
+                    (last_possible_partial_page as usize * PAGE_SIZE) as u64,
+                ))
+                .map_err(PagerError::File)?;
+
+            self.file
+                .write_all(&page.buffer[..num_additional_rows * ROW_SIZE])
+                .or_else(|e| match e.kind() {
+                    // I believe this means that
+                    std::io::ErrorKind::UnexpectedEof => Ok(()),
+                    _ => Err(e),
+                })
+                .map_err(PagerError::File)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -128,12 +194,22 @@ impl Table {
     {
         Pager::new(filename)
             .map_err(TableError::PagerError)
-            .map(|pager| Table { num_rows: 0, pager })
+            .map(|pager| {
+                let num_rows: u32 = (pager.file_length / ROW_SIZE as u64) as u32;
+                // println!("num of rows loaded from file at init: {}", num_rows);
+                Table { num_rows, pager }
+            })
     }
 }
 
 impl Drop for Table {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        let total_actual_rows = self.num_rows as usize;
+
+        self.pager
+            .flush(total_actual_rows)
+            .expect("dropping table failed to flush pages to disk");
+    }
 }
 
 #[derive(Debug)]
@@ -171,10 +247,14 @@ enum ReplErr {
 }
 
 fn main() {
+    // parse command line args
+    let args: Vec<String> = std::env::args().collect();
+    let database_file_name = args.get(1).expect("must provide file name for database");
+
     // initialize any thing we need for the REPL
     let mut input_buffer = String::new();
 
-    let mut table = Table::new("database-file.example").expect("could not create table");
+    let mut table = Table::new(database_file_name).expect("could not create table");
 
     // Loop until "exit" input is provided
     loop {
@@ -295,14 +375,11 @@ fn get_buffer_for_row_in_page(table: &Table, row_num: u32) -> &[u8] {
 }
 
 fn get_buffer_for_row_in_page_mut(
-    table: &mut Table,
+    pager: &mut Pager,
     row_num: u32,
 ) -> Result<&mut [u8], TableError> {
     let page_num = row_num / ROWS_PER_PAGE as u32;
-    let page = table
-        .pager
-        .get_page(page_num)
-        .map_err(TableError::PagerError)?;
+    let page = pager.get_page(page_num).map_err(TableError::PagerError)?;
     let row_offset = row_num % ROWS_PER_PAGE as u32;
     let byte_offset = row_offset * ROW_SIZE as u32;
     Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
@@ -318,8 +395,9 @@ fn execute_statement<'a>(
                 Err(ExecuteError::TableFull)
             } else {
                 let bytes = serialize_row(&row);
-                let mut row_buffer = get_buffer_for_row_in_page_mut(table, table.num_rows)
-                    .map_err(ExecuteError::Table)?;
+                let mut row_buffer =
+                    get_buffer_for_row_in_page_mut(&mut table.pager, table.num_rows)
+                        .map_err(ExecuteError::Table)?;
                 row_buffer.write_all(&bytes).map_err(ExecuteError::Write)?;
                 table.num_rows += 1;
                 Ok(ReplResult::Success)
@@ -328,13 +406,49 @@ fn execute_statement<'a>(
         Statement::Select => {
             let mut rows = Vec::new();
 
+            // stop-gap solution: load all pages in first before running loop
+            // table
+            //     .pager
+            //     .load_all_pages(table.num_rows as usize)
+            //     .map_err(TableError::PagerError)
+            //     .map_err(ExecuteError::Table)?;
+
             for i in 0..table.num_rows {
-                let row_buffer = get_buffer_for_row_in_page(table, i);
-                let sized_row_buffer = row_buffer.try_into().map_err(ExecuteError::RowRead)?;
+                let row_buffer = get_buffer_for_row_in_page_mut(&mut table.pager, i)
+                    .map_err(ExecuteError::Table)?;
+                let sized_row_buffer = (&*row_buffer).try_into().map_err(ExecuteError::RowRead)?;
                 let row = deserialize_row(sized_row_buffer);
                 rows.push(row);
             }
             Ok(ReplResult::Rows(rows))
+        }
+    }
+}
+
+struct OwnedRow {
+    id: u32,
+    username: Vec<u8>,
+    email: Vec<u8>,
+}
+
+impl Borrow<Row<'_>> for OwnedRow {
+    fn borrow(&self) -> &Row {
+        Row {
+            id: self.id,
+            username: &self.username,
+            email: &self.email,
+        }
+    }
+}
+
+impl ToOwned for Row<'_> {
+    type Owned = OwnedRow;
+
+    fn to_owned(&self) -> Self::Owned {
+        OwnedRow {
+            id: self.id,
+            username: self.username.to_vec(),
+            email: self.email.to_vec(),
         }
     }
 }

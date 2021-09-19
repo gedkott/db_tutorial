@@ -2,9 +2,15 @@ use std::io::Write;
 use std::iter::repeat;
 use std::process::{Command, Stdio};
 
-fn run_script(commands: Vec<String>) -> Vec<String> {
+fn run_script(commands: Vec<String>, test_case: &str) -> Vec<String> {
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+
+    std::fs::remove_file(&test_file_name)
+        .expect("could not clean up database files before running tests");
+
     let mut child = Command::new("cargo")
         .arg("run")
+        .arg(&test_file_name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -34,11 +40,14 @@ fn run_script(commands: Vec<String>) -> Vec<String> {
 
 #[test]
 fn database_inserts_and_retrieves_a_row() {
-    let output = run_script(vec![
-        "insert 1 user1 person1@example.com".into(),
-        "select".into(),
-        ".exit".into(),
-    ]);
+    let output = run_script(
+        vec![
+            "insert 1 user1 person1@example.com".into(),
+            "select".into(),
+            ".exit".into(),
+        ],
+        "database_inserts_and_retrieves_a_row",
+    );
     assert_eq!(
         output,
         vec![
@@ -60,7 +69,7 @@ fn prints_error_message_when_table_is_full() {
         .collect();
     cmds.push(".exit".into());
 
-    let output = run_script(cmds);
+    let output = run_script(cmds, "prints_error_message_when_table_is_full");
     let relevant_output = output.get(output.len() - 2).unwrap();
     assert_eq!(relevant_output, "db message: Execute(TableFull)",);
 }
@@ -75,7 +84,10 @@ fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
         "select".into(),
         ".exit".into(),
     ];
-    let output = run_script(cmds);
+    let output = run_script(
+        cmds,
+        "allows_inserting_and_selecting_strings_that_are_the_max_length",
+    );
     assert_eq!(
         output,
         vec![
@@ -99,7 +111,7 @@ fn prints_error_messages_if_strings_are_too_long() {
         format!("insert 1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let output = run_script(cmds);
+    let output = run_script(cmds, "prints_error_messages_if_strings_are_too_long");
     assert_eq!(
         output,
             vec![
@@ -119,7 +131,7 @@ fn prints_error_messages_if_id_is_negative() {
         format!("insert -1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let output = run_script(cmds);
+    let output = run_script(cmds, "prints_error_messages_if_id_is_negative");
     assert_eq!(
         output,
         vec![
@@ -132,10 +144,10 @@ fn prints_error_messages_if_id_is_negative() {
 
 #[test]
 fn keeps_data_after_closing_connection() {
-    let output1 = run_script(vec![
-        "insert 1 user1 person1@example.com".into(),
-        ".exit".into(),
-    ]);
+    let output1 = run_script(
+        vec!["insert 1 user1 person1@example.com".into(), ".exit".into()],
+        "keeps_data_after_closing_connection",
+    );
     assert_eq!(
         output1,
         vec![
@@ -146,7 +158,10 @@ fn keeps_data_after_closing_connection() {
         ]
     );
 
-    let output2 = run_script(vec!["select".into(), ".exit".into()]);
+    let output2 = run_script(
+        vec!["select".into(), ".exit".into()],
+        "keeps_data_after_closing_connection",
+    );
     assert_eq!(
         output2,
         vec![

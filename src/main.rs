@@ -6,8 +6,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{stdin, stdout};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::iter::repeat;
-// use std::os::windows::prelude::FileExt;
-use std::os::unix::prelude::FileExt;
 
 use std::path::Path;
 use std::str::from_utf8;
@@ -95,8 +93,7 @@ impl Pager {
                     };
 
                     if page_num as u64 <= num_pages {
-                        let max_offset = self
-                            .file
+                        self.file
                             .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
                             .map_err(PagerError::File)?;
                         self.file
@@ -289,7 +286,7 @@ fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
     }
 }
 
-fn row_slot(table: &Table, row_num: u32) -> &[u8] {
+fn get_buffer_for_row_in_page(table: &Table, row_num: u32) -> &[u8] {
     let page_num = row_num / ROWS_PER_PAGE as u32;
     let page = &table.pager.pages[&page_num];
     let row_offset = row_num % ROWS_PER_PAGE as u32;
@@ -297,7 +294,10 @@ fn row_slot(table: &Table, row_num: u32) -> &[u8] {
     &page.buffer[byte_offset as usize..(byte_offset as usize + ROW_SIZE)]
 }
 
-fn row_slot_mut(table: &mut Table, row_num: u32) -> Result<&mut [u8], TableError> {
+fn get_buffer_for_row_in_page_mut(
+    table: &mut Table,
+    row_num: u32,
+) -> Result<&mut [u8], TableError> {
     let page_num = row_num / ROWS_PER_PAGE as u32;
     let page = table
         .pager
@@ -318,8 +318,9 @@ fn execute_statement<'a>(
                 Err(ExecuteError::TableFull)
             } else {
                 let bytes = serialize_row(&row);
-                let mut point = row_slot_mut(table, table.num_rows).map_err(ExecuteError::Table)?;
-                point.write_all(&bytes).map_err(ExecuteError::Write)?;
+                let mut row_buffer = get_buffer_for_row_in_page_mut(table, table.num_rows)
+                    .map_err(ExecuteError::Table)?;
+                row_buffer.write_all(&bytes).map_err(ExecuteError::Write)?;
                 table.num_rows += 1;
                 Ok(ReplResult::Success)
             }
@@ -328,9 +329,9 @@ fn execute_statement<'a>(
             let mut rows = Vec::new();
 
             for i in 0..table.num_rows {
-                let point = row_slot(table, i);
-                let sized_point = point.try_into().map_err(ExecuteError::RowRead)?;
-                let row = deserialize_row(sized_point);
+                let row_buffer = get_buffer_for_row_in_page(table, i);
+                let sized_row_buffer = row_buffer.try_into().map_err(ExecuteError::RowRead)?;
+                let row = deserialize_row(sized_row_buffer);
                 rows.push(row);
             }
             Ok(ReplResult::Rows(rows))

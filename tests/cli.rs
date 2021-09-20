@@ -46,169 +46,172 @@ where
         .expect("could not clean up database files before running tests");
 }
 
+fn clean_test(test_case: &str, test: fn(&str)) -> impl Fn() {
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    let clean_test_wrapper = move || {
+        ensure_clean_fs(&test_file_name);
+        test(&test_file_name);
+        ensure_clean_fs(&test_file_name);
+    };
+    clean_test_wrapper
+}
+
 #[test]
 fn database_inserts_and_retrieves_a_row() {
     let test_case = "database_inserts_and_retrieves_a_row";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
 
-    let output = run_script(
-        vec![
-            "insert 1 user1 person1@example.com".into(),
-            "select".into(),
-            ".exit".into(),
-        ],
-        &test_file_name,
-    );
-    assert_eq!(
-        output,
-        vec![
-            "db > processing statement \"insert 1 user1 person1@example.com\"",
-            "executing insert statement",
-            "result Success",
-            "db > processing statement \"select\"",
-            "executing select statement",
-            "1, \"user1\", \"person1@example.com\"",
-            "db > "
-        ]
-    );
+    let test = |test_file_name: &str| {
+        let output = run_script(
+            vec![
+                "insert 1 user1 person1@example.com".into(),
+                "select".into(),
+                ".exit".into(),
+            ],
+            &test_file_name,
+        );
+        assert_eq!(
+            output,
+            vec![
+                "db > processing statement \"insert 1 user1 person1@example.com\"",
+                "executing insert statement",
+                "result Success",
+                "db > processing statement \"select\"",
+                "executing select statement",
+                "1, \"user1\", \"person1@example.com\"",
+                "db > "
+            ]
+        );
+    };
 
-    ensure_clean_fs(&test_file_name);
+    clean_test(test_case, test)();
 }
 
 #[test]
 fn prints_error_message_when_table_is_full() {
     let test_case = "prints_error_message_when_table_is_full";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
+    let test = |test_file_name: &str| {
+        let mut cmds: Vec<String> = (1..1402)
+            .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
+            .collect();
+        cmds.push(".exit".into());
 
-    let mut cmds: Vec<String> = (1..1402)
-        .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
-        .collect();
-    cmds.push(".exit".into());
+        let output = run_script(cmds, &test_file_name);
+        let relevant_output = output.get(output.len() - 2).unwrap();
+        assert_eq!(relevant_output, "db message: Execute(TableFull)",);
+    };
 
-    let output = run_script(cmds, &test_file_name);
-    let relevant_output = output.get(output.len() - 2).unwrap();
-    assert_eq!(relevant_output, "db message: Execute(TableFull)",);
-
-    ensure_clean_fs(&test_file_name);
+    clean_test(test_case, test)();
 }
 
 #[test]
 fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
     let test_case = "allows_inserting_and_selecting_strings_that_are_the_max_length";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
+    let test = |test_file_name: &str| {
+        let long_username: String = repeat("a").take(32).collect();
+        let long_email: String = repeat("a").take(255).collect();
 
-    let long_username: String = repeat("a").take(32).collect();
-    let long_email: String = repeat("a").take(255).collect();
-
-    let cmds = vec![
-        format!("insert 1 {} {}", long_username, long_email),
-        "select".into(),
-        ".exit".into(),
-    ];
-    let output = run_script(cmds, &test_file_name);
-    assert_eq!(
-        output,
-        vec![
-            "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", 
-            "executing insert statement",
-            "result Success",
-            "db > processing statement \"select\"",
-            "executing select statement",
-            "1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
-            "db > "
-        ]
-    );
-
-    ensure_clean_fs(&test_file_name);
+        let cmds = vec![
+            format!("insert 1 {} {}", long_username, long_email),
+            "select".into(),
+            ".exit".into(),
+        ];
+        let output = run_script(cmds, &test_file_name);
+        assert_eq!(
+            output,
+            vec![
+                "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", 
+                "executing insert statement",
+                "result Success",
+                "db > processing statement \"select\"",
+                "executing select statement",
+                "1, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+                "db > "
+            ]
+        );
+    };
+    clean_test(test_case, test)();
 }
 
 #[test]
 fn prints_error_messages_if_strings_are_too_long() {
     let test_case = "prints_error_messages_if_strings_are_too_long";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
+    let test = |test_file_name: &str| {
+        let long_username: String = repeat("a").take(33).collect();
+        let long_email: String = repeat("a").take(256).collect();
 
-    let long_username: String = repeat("a").take(33).collect();
-    let long_email: String = repeat("a").take(256).collect();
+        let cmds = vec![
+            format!("insert 1 {} {}", long_username, long_email),
+            ".exit".into(),
+        ];
+        let output = run_script(cmds, &test_file_name);
+        assert_eq!(
+            output,
+                vec![
+                    "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+                    "db message: Statement(TooLong)",
+                    "db > "
+                ]
+        );
+    };
 
-    let cmds = vec![
-        format!("insert 1 {} {}", long_username, long_email),
-        ".exit".into(),
-    ];
-    let output = run_script(cmds, &test_file_name);
-    assert_eq!(
-        output,
-            vec![
-                "db > processing statement \"insert 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
-                "db message: Statement(TooLong)",
-                "db > "
-            ]
-    );
-
-    ensure_clean_fs(&test_file_name);
+    clean_test(test_case, test)();
 }
 
 #[test]
 fn prints_error_messages_if_id_is_negative() {
     let test_case = "prints_error_messages_if_id_is_negative";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
+    let test = |test_file_name: &str| {
+        let long_username = "a";
+        let long_email = "a";
 
-    let long_username = "a";
-    let long_email = "a";
+        let cmds = vec![
+            format!("insert -1 {} {}", long_username, long_email),
+            ".exit".into(),
+        ];
+        let output = run_script(cmds, &test_file_name);
+        assert_eq!(
+            output,
+            vec![
+                "db > processing statement \"insert -1 a a\"",
+                "db message: Statement(InvalidId)",
+                "db > "
+            ]
+        );
+    };
 
-    let cmds = vec![
-        format!("insert -1 {} {}", long_username, long_email),
-        ".exit".into(),
-    ];
-    let output = run_script(cmds, &test_file_name);
-    assert_eq!(
-        output,
-        vec![
-            "db > processing statement \"insert -1 a a\"",
-            "db message: Statement(InvalidId)",
-            "db > "
-        ]
-    );
-
-    ensure_clean_fs(&test_file_name);
+    clean_test(test_case, test)();
 }
 
 #[test]
 fn keeps_data_after_closing_connection() {
     let test_case = "keeps_data_after_closing_connection";
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-    ensure_clean_fs(&test_file_name);
+    let test = |test_file_name: &str| {
+        let output1 = run_script(
+            vec!["insert 1 user1 person1@example.com".into(), ".exit".into()],
+            &test_file_name,
+        );
+        assert_eq!(
+            output1,
+            vec![
+                "db > processing statement \"insert 1 user1 person1@example.com\"",
+                "executing insert statement",
+                "result Success",
+                "db > ",
+            ]
+        );
 
-    let output1 = run_script(
-        vec!["insert 1 user1 person1@example.com".into(), ".exit".into()],
-        &test_file_name,
-    );
-    assert_eq!(
-        output1,
-        vec![
-            "db > processing statement \"insert 1 user1 person1@example.com\"",
-            "executing insert statement",
-            "result Success",
-            "db > ",
-        ]
-    );
+        // std::thread::sleep(Duration::from_millis(1000));
 
-    // std::thread::sleep(Duration::from_millis(1000));
-
-    let output2 = run_script(vec!["select".into(), ".exit".into()], &test_file_name);
-    assert_eq!(
-        output2,
-        vec![
-            "db > processing statement \"select\"",
-            "executing select statement",
-            "1, \"user1\", \"person1@example.com\"",
-            "db > "
-        ]
-    );
-
-    ensure_clean_fs(&test_file_name);
+        let output2 = run_script(vec!["select".into(), ".exit".into()], &test_file_name);
+        assert_eq!(
+            output2,
+            vec![
+                "db > processing statement \"select\"",
+                "executing select statement",
+                "1, \"user1\", \"person1@example.com\"",
+                "db > "
+            ]
+        );
+    };
+    clean_test(test_case, test)();
 }

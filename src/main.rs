@@ -397,13 +397,6 @@ fn execute_statement<'a>(
         Statement::Select => {
             let mut rows = Vec::new();
 
-            // stop-gap solution: load all pages in first before running loop
-            // table
-            //     .pager
-            //     .load_all_pages(table.num_rows as usize)
-            //     .map_err(TableError::PagerError)
-            //     .map_err(ExecuteError::Table)?;
-
             for i in 0..table.num_rows {
                 let row_buffer = get_buffer_for_row_in_page_mut(&mut table.pager, i)
                     .map_err(ExecuteError::Table)?;

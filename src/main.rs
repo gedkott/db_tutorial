@@ -118,16 +118,6 @@ impl Pager {
         }
     }
 
-    // fn load_all_pages(&mut self, total_num_rows: usize) -> Result<(), PagerError> {
-    //     let num_pages_to_load = total_num_rows / ROWS_PER_PAGE;
-
-    //     // for i in 0..num_pages_to_load {
-    //     //     self.pages.
-    //     // }
-
-    //     Ok(())
-    // }
-
     // the table knows about rows, not the pager; so we expect that data as input
     fn flush(&mut self, total_num_rows: usize) -> Result<(), PagerError> {
         let num_full_pages = total_num_rows / ROWS_PER_PAGE;

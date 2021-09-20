@@ -185,7 +185,6 @@ impl Table {
             .map_err(TableError::PagerError)
             .map(|pager| {
                 let num_rows: u32 = (pager.file_length / ROW_SIZE as u64) as u32;
-                // println!("num of rows loaded from file at init: {}", num_rows);
                 Table { num_rows, pager }
             })
     }

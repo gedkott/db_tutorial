@@ -1,16 +1,12 @@
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::iter::repeat;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
-fn run_script(commands: Vec<String>, test_case: &str) -> Vec<String> {
-    let test_file_name = format!("test-database-for-{}.db", test_case);
-
-    std::fs::remove_file(&test_file_name)
-        .expect("could not clean up database files before running tests");
-
+fn run_script(commands: Vec<String>, test_file_name: &str) -> Vec<String> {
     let mut child = Command::new("cargo")
         .arg("run")
-        .arg(&test_file_name)
+        .arg(test_file_name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -38,15 +34,31 @@ fn run_script(commands: Vec<String>, test_case: &str) -> Vec<String> {
     stringified.split("\n").map(String::from).collect()
 }
 
+fn ensure_clean_fs<P>(test_file_name: P)
+where
+    P: AsRef<Path>,
+{
+    std::fs::remove_file(test_file_name)
+        .or_else(|e| match e.kind() {
+            ErrorKind::NotFound => Ok(()),
+            _ => Err(e),
+        })
+        .expect("could not clean up database files before running tests");
+}
+
 #[test]
 fn database_inserts_and_retrieves_a_row() {
+    let test_case = "database_inserts_and_retrieves_a_row";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let output = run_script(
         vec![
             "insert 1 user1 person1@example.com".into(),
             "select".into(),
             ".exit".into(),
         ],
-        "database_inserts_and_retrieves_a_row",
+        &test_file_name,
     );
     assert_eq!(
         output,
@@ -60,22 +72,34 @@ fn database_inserts_and_retrieves_a_row() {
             "db > "
         ]
     );
+
+    ensure_clean_fs(&test_file_name);
 }
 
 #[test]
 fn prints_error_message_when_table_is_full() {
+    let test_case = "prints_error_message_when_table_is_full";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let mut cmds: Vec<String> = (1..1402)
         .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
         .collect();
     cmds.push(".exit".into());
 
-    let output = run_script(cmds, "prints_error_message_when_table_is_full");
+    let output = run_script(cmds, &test_file_name);
     let relevant_output = output.get(output.len() - 2).unwrap();
     assert_eq!(relevant_output, "db message: Execute(TableFull)",);
+
+    ensure_clean_fs(&test_file_name);
 }
 
 #[test]
 fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
+    let test_case = "allows_inserting_and_selecting_strings_that_are_the_max_length";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let long_username: String = repeat("a").take(32).collect();
     let long_email: String = repeat("a").take(255).collect();
 
@@ -84,10 +108,7 @@ fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
         "select".into(),
         ".exit".into(),
     ];
-    let output = run_script(
-        cmds,
-        "allows_inserting_and_selecting_strings_that_are_the_max_length",
-    );
+    let output = run_script(cmds, &test_file_name);
     assert_eq!(
         output,
         vec![
@@ -100,10 +121,16 @@ fn allows_inserting_and_selecting_strings_that_are_the_max_length() {
             "db > "
         ]
     );
+
+    ensure_clean_fs(&test_file_name);
 }
 
 #[test]
 fn prints_error_messages_if_strings_are_too_long() {
+    let test_case = "prints_error_messages_if_strings_are_too_long";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let long_username: String = repeat("a").take(33).collect();
     let long_email: String = repeat("a").take(256).collect();
 
@@ -111,7 +138,7 @@ fn prints_error_messages_if_strings_are_too_long() {
         format!("insert 1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let output = run_script(cmds, "prints_error_messages_if_strings_are_too_long");
+    let output = run_script(cmds, &test_file_name);
     assert_eq!(
         output,
             vec![
@@ -120,10 +147,16 @@ fn prints_error_messages_if_strings_are_too_long() {
                 "db > "
             ]
     );
+
+    ensure_clean_fs(&test_file_name);
 }
 
 #[test]
 fn prints_error_messages_if_id_is_negative() {
+    let test_case = "prints_error_messages_if_id_is_negative";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let long_username = "a";
     let long_email = "a";
 
@@ -131,7 +164,7 @@ fn prints_error_messages_if_id_is_negative() {
         format!("insert -1 {} {}", long_username, long_email),
         ".exit".into(),
     ];
-    let output = run_script(cmds, "prints_error_messages_if_id_is_negative");
+    let output = run_script(cmds, &test_file_name);
     assert_eq!(
         output,
         vec![
@@ -140,13 +173,19 @@ fn prints_error_messages_if_id_is_negative() {
             "db > "
         ]
     );
+
+    ensure_clean_fs(&test_file_name);
 }
 
 #[test]
 fn keeps_data_after_closing_connection() {
+    let test_case = "keeps_data_after_closing_connection";
+    let test_file_name = format!("test-database-for-{}.db", test_case);
+    ensure_clean_fs(&test_file_name);
+
     let output1 = run_script(
         vec!["insert 1 user1 person1@example.com".into(), ".exit".into()],
-        "keeps_data_after_closing_connection",
+        &test_file_name,
     );
     assert_eq!(
         output1,
@@ -158,10 +197,9 @@ fn keeps_data_after_closing_connection() {
         ]
     );
 
-    let output2 = run_script(
-        vec!["select".into(), ".exit".into()],
-        "keeps_data_after_closing_connection",
-    );
+    // std::thread::sleep(Duration::from_millis(1000));
+
+    let output2 = run_script(vec!["select".into(), ".exit".into()], &test_file_name);
     assert_eq!(
         output2,
         vec![
@@ -171,4 +209,6 @@ fn keeps_data_after_closing_connection() {
             "db > "
         ]
     );
+
+    ensure_clean_fs(&test_file_name);
 }

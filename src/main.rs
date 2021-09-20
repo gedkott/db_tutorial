@@ -1,5 +1,4 @@
 use std::array::TryFromSliceError;
-use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -228,8 +227,8 @@ enum ExecuteError {
 }
 
 #[derive(Debug)]
-enum ReplResult<'a> {
-    Rows(Vec<Row<'a>>),
+enum ReplResult {
+    Rows(Vec<OwnedRow>),
     Success,
 }
 
@@ -284,8 +283,8 @@ fn main() {
                                     println!(
                                         "{:?}, {:?}, {:?}",
                                         r.id,
-                                        from_utf8(r.username).unwrap().trim_matches(char::from(0)),
-                                        from_utf8(r.email).unwrap().trim_matches(char::from(0))
+                                        from_utf8(&r.username).unwrap().trim_matches(char::from(0)),
+                                        from_utf8(&r.email).unwrap().trim_matches(char::from(0))
                                     );
                                 });
                             }
@@ -366,14 +365,6 @@ fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
     }
 }
 
-fn get_buffer_for_row_in_page(table: &Table, row_num: u32) -> &[u8] {
-    let page_num = row_num / ROWS_PER_PAGE as u32;
-    let page = &table.pager.pages[&page_num];
-    let row_offset = row_num % ROWS_PER_PAGE as u32;
-    let byte_offset = row_offset * ROW_SIZE as u32;
-    &page.buffer[byte_offset as usize..(byte_offset as usize + ROW_SIZE)]
-}
-
 fn get_buffer_for_row_in_page_mut(
     pager: &mut Pager,
     row_num: u32,
@@ -388,7 +379,7 @@ fn get_buffer_for_row_in_page_mut(
 fn execute_statement<'a>(
     statement: Statement<'a>,
     table: &'a mut Table,
-) -> Result<ReplResult<'a>, ExecuteError> {
+) -> Result<ReplResult, ExecuteError> {
     match statement {
         Statement::Insert { row } => {
             if table.num_rows == TABLE_MAX_ROWS as u32 {
@@ -418,39 +409,22 @@ fn execute_statement<'a>(
                     .map_err(ExecuteError::Table)?;
                 let sized_row_buffer = (&*row_buffer).try_into().map_err(ExecuteError::RowRead)?;
                 let row = deserialize_row(sized_row_buffer);
-                rows.push(row);
+                rows.push(OwnedRow {
+                    id: row.id,
+                    username: row.username.to_owned(),
+                    email: row.email.to_owned(),
+                });
             }
             Ok(ReplResult::Rows(rows))
         }
     }
 }
 
+#[derive(Debug)]
 struct OwnedRow {
     id: u32,
     username: Vec<u8>,
     email: Vec<u8>,
-}
-
-impl Borrow<Row<'_>> for OwnedRow {
-    fn borrow(&self) -> &Row {
-        Row {
-            id: self.id,
-            username: &self.username,
-            email: &self.email,
-        }
-    }
-}
-
-impl ToOwned for Row<'_> {
-    type Owned = OwnedRow;
-
-    fn to_owned(&self) -> Self::Owned {
-        OwnedRow {
-            id: self.id,
-            username: self.username.to_vec(),
-            email: self.email.to_vec(),
-        }
-    }
 }
 
 fn prepare_statement(original_input: &str) -> Result<Statement, StatementError> {

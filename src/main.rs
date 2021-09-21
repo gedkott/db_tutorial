@@ -245,6 +245,24 @@ impl Table {
         let byte_offset = row_offset * ROW_SIZE as u32;
         Ok(&page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
     }
+
+    fn start(&mut self) -> Cursor {
+        let end_of_table = self.num_rows == 0;
+        Cursor {
+            table: self,
+            row_num: 0,
+            end_of_table,
+        }
+    }
+
+    fn end(&mut self) -> Cursor {
+        let row_num = self.num_rows;
+        Cursor {
+            table: self,
+            end_of_table: true,
+            row_num,
+        }
+    }
 }
 
 impl Drop for Table {
@@ -272,6 +290,25 @@ enum ExecuteError {
     Write(std::io::Error),
     TableFull,
     Table(TableError),
+}
+
+struct Cursor<'a> {
+    table: &'a mut Table,
+    row_num: u32,
+    end_of_table: bool,
+}
+
+impl<'a> Cursor<'a> {
+    fn value(&'a mut self) -> Result<&'a mut [u8], TableError> {
+        self.table.get_buffer_for_row_in_page_mut(self.row_num)
+    }
+
+    fn advance(&'a mut self) {
+        self.row_num += 1;
+        if self.row_num >= self.table.num_rows {
+            self.end_of_table = true;
+        }
+    }
 }
 
 #[derive(Debug)]

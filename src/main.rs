@@ -178,6 +178,51 @@ enum TableError {
     Pager(PagerError),
 }
 
+struct VirtualMachine<'a> {
+    table: &'a mut Table,
+}
+
+impl VirtualMachine<'_> {
+    fn execute_statement<'a>(
+        &'a mut self,
+        statement: Statement<'a>,
+    ) -> Result<ReplResult, ExecuteError> {
+        match statement {
+            Statement::Insert { row } => {
+                if self.table.num_rows == TABLE_MAX_ROWS as u32 {
+                    Err(ExecuteError::TableFull)
+                } else {
+                    let mut cursor = self.table.end();
+                    let mut row_buffer = cursor.value().map_err(ExecuteError::Table)?;
+                    let bytes = serialize_row(&row);
+                    row_buffer.write_all(&bytes).map_err(ExecuteError::Write)?;
+                    self.table.num_rows += 1;
+                    Ok(ReplResult::Success)
+                }
+            }
+            Statement::Select => {
+                let mut rows = Vec::new();
+                let mut cursor = self.table.start();
+
+                while !cursor.end_of_table {
+                    let row_buffer = cursor.value().map_err(ExecuteError::Table)?;
+                    let sized_row_buffer =
+                        (&*row_buffer).try_into().map_err(ExecuteError::RowRead)?;
+                    let row = deserialize_row(sized_row_buffer);
+                    rows.push(ResultRow {
+                        id: row.id,
+                        username: row.username.to_owned(),
+                        email: row.email.to_owned(),
+                    });
+                    cursor.advance();
+                }
+
+                Ok(ReplResult::Rows(rows))
+            }
+        }
+    }
+}
+
 impl Table {
     fn new<P>(filename: P) -> Result<Self, TableError>
     where
@@ -191,59 +236,22 @@ impl Table {
             })
     }
 
-    fn execute_statement<'a>(
-        &'a mut self,
-        statement: Statement<'a>,
-    ) -> Result<ReplResult, ExecuteError> {
-        match statement {
-            Statement::Insert { row } => {
-                if self.num_rows == TABLE_MAX_ROWS as u32 {
-                    Err(ExecuteError::TableFull)
-                } else {
-                    let bytes = serialize_row(&row);
-                    let mut row_buffer = self
-                        .get_buffer_for_row_in_page_mut(self.num_rows)
-                        .map_err(ExecuteError::Table)?;
-                    row_buffer.write_all(&bytes).map_err(ExecuteError::Write)?;
-                    self.num_rows += 1;
-                    Ok(ReplResult::Success)
-                }
-            }
-            Statement::Select => {
-                let mut rows = Vec::new();
-
-                for i in 0..self.num_rows {
-                    let row_buffer = self
-                        .get_buffer_for_row_in_page(i)
-                        .map_err(ExecuteError::Table)?;
-                    let sized_row_buffer =
-                        (&*row_buffer).try_into().map_err(ExecuteError::RowRead)?;
-                    let row = deserialize_row(sized_row_buffer);
-                    rows.push(ResultRow {
-                        id: row.id,
-                        username: row.username.to_owned(),
-                        email: row.email.to_owned(),
-                    });
-                }
-                Ok(ReplResult::Rows(rows))
-            }
+    fn start(&mut self) -> Cursor {
+        let end_of_table = self.num_rows == 0;
+        Cursor {
+            table: self,
+            row_num: 0,
+            end_of_table,
         }
     }
 
-    fn get_buffer_for_row_in_page_mut(&mut self, row_num: u32) -> Result<&mut [u8], TableError> {
-        let page_num = row_num / ROWS_PER_PAGE as u32;
-        let page = self.pager.get_page(page_num).map_err(TableError::Pager)?;
-        let row_offset = row_num % ROWS_PER_PAGE as u32;
-        let byte_offset = row_offset * ROW_SIZE as u32;
-        Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
-    }
-
-    fn get_buffer_for_row_in_page(&mut self, row_num: u32) -> Result<&[u8], TableError> {
-        let page_num = row_num / ROWS_PER_PAGE as u32;
-        let page = self.pager.get_page(page_num).map_err(TableError::Pager)?;
-        let row_offset = row_num % ROWS_PER_PAGE as u32;
-        let byte_offset = row_offset * ROW_SIZE as u32;
-        Ok(&page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
+    fn end(&mut self) -> Cursor {
+        let row_num = self.num_rows;
+        Cursor {
+            table: self,
+            end_of_table: true,
+            row_num,
+        }
     }
 }
 
@@ -274,6 +282,33 @@ enum ExecuteError {
     Table(TableError),
 }
 
+struct Cursor<'table> {
+    table: &'table mut Table,
+    row_num: u32,
+    end_of_table: bool,
+}
+
+impl Cursor<'_> {
+    fn value(&mut self) -> Result<&mut [u8], TableError> {
+        let page_num = self.row_num / ROWS_PER_PAGE as u32;
+        let page = self
+            .table
+            .pager
+            .get_page(page_num)
+            .map_err(TableError::Pager)?;
+        let row_offset = self.row_num % ROWS_PER_PAGE as u32;
+        let byte_offset = row_offset * ROW_SIZE as u32;
+        Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
+    }
+
+    fn advance(&mut self) {
+        self.row_num += 1;
+        if self.row_num >= self.table.num_rows {
+            self.end_of_table = true;
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ReplResult {
     Rows(Vec<ResultRow>),
@@ -302,6 +337,7 @@ fn main() {
     let mut input_buffer = String::new();
 
     let mut table = Table::new(database_file_name).expect("could not create table");
+    let mut virtual_machine = VirtualMachine { table: &mut table };
 
     // Loop until "exit" input is provided
     loop {
@@ -323,7 +359,9 @@ fn main() {
                                     println!("executing select statement");
                                 }
                             }
-                            table.execute_statement(s).map_err(ReplErr::Execute)
+                            virtual_machine
+                                .execute_statement(s)
+                                .map_err(ReplErr::Execute)
                         }) {
                         Ok(results) => match results {
                             ReplResult::Rows(rows) => {

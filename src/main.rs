@@ -290,7 +290,15 @@ struct Cursor<'table> {
 
 impl Cursor<'_> {
     fn value(&mut self) -> Result<&mut [u8], TableError> {
-        self.get_buffer_for_row_in_page_mut(self.row_num)
+        let page_num = self.row_num / ROWS_PER_PAGE as u32;
+        let page = self
+            .table
+            .pager
+            .get_page(page_num)
+            .map_err(TableError::Pager)?;
+        let row_offset = self.row_num % ROWS_PER_PAGE as u32;
+        let byte_offset = row_offset * ROW_SIZE as u32;
+        Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
     }
 
     fn advance(&mut self) {
@@ -298,18 +306,6 @@ impl Cursor<'_> {
         if self.row_num >= self.table.num_rows {
             self.end_of_table = true;
         }
-    }
-
-    fn get_buffer_for_row_in_page_mut(&mut self, row_num: u32) -> Result<&mut [u8], TableError> {
-        let page_num = row_num / ROWS_PER_PAGE as u32;
-        let page = self
-            .table
-            .pager
-            .get_page(page_num)
-            .map_err(TableError::Pager)?;
-        let row_offset = row_num % ROWS_PER_PAGE as u32;
-        let byte_offset = row_offset * ROW_SIZE as u32;
-        Ok(&mut page.buffer[byte_offset as usize..byte_offset as usize + ROW_SIZE])
     }
 }
 

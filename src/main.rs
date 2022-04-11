@@ -3,6 +3,7 @@ use std::io::{stdin, stdout};
 
 use std::str::from_utf8;
 
+mod btree;
 mod constants;
 mod pager;
 mod table;

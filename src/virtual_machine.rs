@@ -53,7 +53,7 @@ pub enum VMResult {
 fn serialize_row(row: &Row) -> [u8; ROW_SIZE] {
     let mut buf = [0u8; ROW_SIZE];
 
-    let ibytes = &u32::to_be_bytes(row.id)[..];
+    let ibytes = &u32::to_le_bytes(row.id)[..];
     let ubytes = row.username;
     let ebytes = row.email;
 
@@ -102,7 +102,7 @@ fn serialize_row(row: &Row) -> [u8; ROW_SIZE] {
 }
 
 fn deserialize_row(buf: &[u8; ROW_SIZE]) -> Row {
-    let id = u32::from_be_bytes(buf[..USERNAME_OFFSET].try_into().unwrap());
+    let id = u32::from_le_bytes(buf[..USERNAME_OFFSET].try_into().unwrap());
     let username = &buf[USERNAME_OFFSET..EMAIL_OFFSET];
     let email = &buf[EMAIL_OFFSET..ROW_SIZE];
 

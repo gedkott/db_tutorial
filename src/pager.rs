@@ -24,6 +24,12 @@ pub enum PagerError {
     PagesFull,
 }
 
+fn get_file_with_length(mut file: File) -> std::io::Result<(File, u64)> {
+    // https://man7.org/linux/man-pages/man2/lseek.2.html
+    let seeker = file.seek(SeekFrom::End(0));
+    seeker.map(|len| (file, len))
+}
+
 impl Pager {
     pub fn new<P>(filename: P) -> Result<Self, PagerError>
     where
@@ -34,7 +40,7 @@ impl Pager {
             .write(true)
             .create(true)
             .open(filename)
-            .and_then(|mut file| file.seek(SeekFrom::End(0)).map(|len| (file, len)))
+            .and_then(get_file_with_length)
             .map(|(file, len)| Pager {
                 file,
                 pages: HashMap::new(),
@@ -67,6 +73,7 @@ impl Pager {
                     // to the file for that fresh page (bytes in the new page won't be counted until we write to file/disk)
                     if page_num as u64 <= total_num_pages_in_file_now {
                         self.file
+                            // corresponds to SEEK_SET in lseek man description
                             .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
                             .map_err(PagerError::File)?;
                         self.file

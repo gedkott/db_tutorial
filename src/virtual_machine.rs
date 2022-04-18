@@ -38,7 +38,7 @@ pub struct VirtualMachine<'a> {
 
 #[derive(Debug)]
 pub enum VMErr {
-    TableFull,
+    // TableFull,
     RowRead(TryFromSliceError),
     Write(std::io::Error),
     Table(TableError),
@@ -154,20 +154,15 @@ impl VirtualMachine<'_> {
     ) -> Result<VMResult, VMErr> {
         match statement {
             Statement::Insert { row } => {
-                if self.table.num_rows == TABLE_MAX_ROWS as u32 {
-                    Err(VMErr::TableFull)
-                } else {
-                    let mut cursor = self.table.end();
-                    let mut row_buffer = cursor.value().map_err(VMErr::Table)?;
-                    let bytes = serialize_row(&row);
-                    row_buffer.write_all(&bytes).map_err(VMErr::Write)?;
-                    self.table.num_rows += 1;
-                    Ok(VMResult::Success)
-                }
+                let mut cursor = self.table.end().map_err(VMErr::Table)?;
+                let mut row_buffer = cursor.value().map_err(VMErr::Table)?;
+                let bytes = serialize_row(&row);
+                row_buffer.write_all(&bytes).map_err(VMErr::Write)?;
+                Ok(VMResult::Success)
             }
             Statement::Select => {
                 let mut rows = Vec::new();
-                let mut cursor = self.table.start();
+                let mut cursor = self.table.start().map_err(VMErr::Table)?;
 
                 while !cursor.end_of_table {
                     let row_buffer = cursor.value().map_err(VMErr::Table)?;

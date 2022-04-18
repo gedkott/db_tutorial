@@ -16,12 +16,14 @@ pub struct Pager {
     file: File,
     pub file_length: u64,
     pages: HashMap<u32, Page>,
+    pub num_pages: u32,
 }
 
 #[derive(Debug)]
 pub enum PagerError {
     File(std::io::Error),
     PagesFull,
+    CorruptFile,
 }
 
 fn get_file_with_length(mut file: File) -> std::io::Result<(File, u64)> {
@@ -41,12 +43,20 @@ impl Pager {
             .create(true)
             .open(filename)
             .and_then(get_file_with_length)
+            .map_err(PagerError::File)
+            .and_then(|(f, length)| {
+                if length as usize % PAGE_SIZE != 0 {
+                    Err(PagerError::CorruptFile)
+                } else {
+                    Ok((f, length))
+                }
+            })
             .map(|(file, len)| Pager {
                 file,
                 pages: HashMap::new(),
                 file_length: len,
+                num_pages: (len as usize / PAGE_SIZE) as u32,
             })
-            .map_err(PagerError::File)
     }
 
     pub fn get_page(&mut self, page_num: u32) -> Result<&mut Page, PagerError> {
@@ -60,30 +70,21 @@ impl Pager {
                         buffer: [0u8; PAGE_SIZE],
                     };
 
-                    let total_num_pages_in_file_now = if self.file_length % PAGE_SIZE as u64 > 0 {
-                        // We might save a partial page at the end of the file
-                        (self.file_length / PAGE_SIZE as u64) + 1
-                    } else {
-                        self.file_length / PAGE_SIZE as u64
-                    };
+                    self.file
+                        .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
+                        .map_err(PagerError::File)?;
 
-                    // if the page number requested is greater than the total num of pages
-                    // we have recorded in the file then there is nothing in the file for us to read
-                    // this will be true the first time we write to a fresh page and until we first write
-                    // to the file for that fresh page (bytes in the new page won't be counted until we write to file/disk)
-                    if page_num as u64 <= total_num_pages_in_file_now {
-                        self.file
-                            // corresponds to SEEK_SET in lseek man description
-                            .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
-                            .map_err(PagerError::File)?;
-                        self.file
-                            .read_exact(&mut page.buffer)
-                            .or_else(|e| match e.kind() {
-                                // This means that we could not fill the entire buffer which is fine since we can't (we know its not a full page)
-                                std::io::ErrorKind::UnexpectedEof => Ok(()),
-                                _ => Err(e),
-                            })
-                            .map_err(PagerError::File)?;
+                    self.file
+                        .read_exact(&mut page.buffer)
+                        .or_else(|e| match e.kind() {
+                            // If someone tries to get a page that corresponds to a file portion that responds with UnexpectedEoF when read then we don't have any data there yet and that is normal behavior
+                            std::io::ErrorKind::UnexpectedEof => Ok(()),
+                            _ => Err(e),
+                        })
+                        .map_err(PagerError::File)?;
+
+                    if page_num >= self.num_pages {
+                        self.num_pages += 1;
                     }
 
                     // return the page buffer whether its totally fresh or had been written to disk before
@@ -93,56 +94,39 @@ impl Pager {
         }
     }
 
-    // the table knows about rows, not the pager; so we expect that data as input
-    pub fn flush(
-        &mut self,
-        num_full_pages: usize,
-        num_additional_bytes: usize,
-    ) -> Result<(), PagerError> {
-        for page_num in 0..num_full_pages {
-            let page = match self.pages.get_mut(&(page_num as u32)) {
-                Some(p) => p,
-                None => {
-                    // during a flush, if there is no page in memory, then nothing about that page needs to be flushed
-                    // since the user could not possibly have changed it if it was never read into memory
-                    continue;
-                }
-            };
-            self.file
-                .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
-                .map_err(PagerError::File)?;
+    pub fn flush(&mut self) -> Vec<(Result<u64, PagerError>, Result<(), PagerError>)> {
+        let mut results = vec![];
+        for (page_num, page) in self.pages.iter_mut() {
+            let seek_res = self
+                .file
+                .seek(SeekFrom::Start((*page_num as usize * PAGE_SIZE) as u64))
+                .map_err(PagerError::File);
 
-            self.file
-                .write_all(&page.buffer)
-                .map_err(PagerError::File)?;
+            let write_res = self.file.write_all(&page.buffer).map_err(PagerError::File);
+
+            results.push((seek_res, write_res));
         }
-
-        let last_possible_partial_page = num_full_pages;
-        if num_additional_bytes > 0 {
-            match self.pages.get_mut(&(last_possible_partial_page as u32)) {
-                Some(page) => {
-                    self.file
-                        .seek(SeekFrom::Start(
-                            (last_possible_partial_page as usize * PAGE_SIZE) as u64,
-                        ))
-                        .map_err(PagerError::File)?;
-
-                    self.file
-                        .write_all(&page.buffer[..num_additional_bytes])
-                        .or_else(|e| match e.kind() {
-                            // I believe this means that
-                            std::io::ErrorKind::UnexpectedEof => Ok(()),
-                            _ => Err(e),
-                        })
-                        .map_err(PagerError::File)
-                }
-                None => {
-                    // if the page we are trying to flush isn't in memory then it doesn't need to be flushed
-                    Ok(())
-                }
-            }
-        } else {
-            Ok(())
-        }
+        results
     }
+
+    // pub fn flush_page(
+    //     &mut self,
+    //     page_num: u32,
+    // ) -> (Result<u64, PagerError>, Result<(), PagerError>) {
+    //     let page = match self.pages.get_mut(&page_num) {
+    //         Some(p) => p,
+    //         None => {
+    //             // was never loaded into memory???
+    //             return (Ok(0u64), Ok(()));
+    //         }
+    //     };
+    //     let seek_res = self
+    //         .file
+    //         .seek(SeekFrom::Start((page_num as usize * PAGE_SIZE) as u64))
+    //         .map_err(PagerError::File);
+
+    //     let write_res = self.file.write_all(&page.buffer).map_err(PagerError::File);
+
+    //     (seek_res, write_res)
+    // }
 }
